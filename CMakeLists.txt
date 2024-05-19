@@ -10,7 +10,11 @@ FetchContent_Declare(SFML
     GIT_TAG 2.6.x)
 FetchContent_MakeAvailable(SFML)
 
-add_executable(phong_shading src/main.cpp)
+add_executable(phong_shading src/main.cpp
+        src/vector_utils.cpp
+        src/phong.cpp
+        src/drawing.cpp
+        src/consts.h)
 target_link_libraries(phong_shading PRIVATE sfml-graphics)
 target_compile_features(phong_shading PRIVATE cxx_std_17)
 
