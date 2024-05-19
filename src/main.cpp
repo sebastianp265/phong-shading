@@ -94,8 +94,6 @@ int main() {
 
     sf::Clock clock;
 
-    sf::RectangleShape pixel(sf::Vector2f(1, 1));
-
     while (window.isOpen()) {
         clock.restart();
         handleEvents(window, lightSourcePosition, materialsIt, materials);
