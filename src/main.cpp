@@ -15,61 +15,56 @@ void normalize(sf::Vector3f &v) {
     }
 }
 
+struct Light {
+    sf::Vector3f ambient;
+    sf::Vector3f diffuse;
+    sf::Vector3f specular;
+};
+
+struct Material {
+    sf::Vector3f ambient;
+    sf::Vector3f diffuse;
+    sf::Vector3f specular;
+    float shininess{};
+};
+
+sf::Vector3f productElementWise(const sf::Vector3f &a, const sf::Vector3f &b) {
+    return {a.x * b.x, a.y * b.y, a.z * b.z};
+}
+
+void capColorVector(sf::Vector3f &vector) {
+    vector.x = std::max(0.0f, std::min(1.0f, vector.x));
+    vector.y = std::max(0.0f, std::min(1.0f, vector.y));
+    vector.z = std::max(0.0f, std::min(1.0f, vector.z));
+}
+
 // https://en.wikipedia.org/wiki/Phong_reflection_model
-sf::Color calculatePhongLighting(
+sf::Vector3f calculatePhongLighting(
         const sf::Vector3f &towardLightSource, // L
         const sf::Vector3f &surfaceNormal, // N
         const sf::Vector3f &reflectedRayDirection, // R
         const sf::Vector3f &towardCamera, // V
-        const sf::Color &objectColor,
-        const sf::Color &lightColor
+        const Material &material,
+        const Light &light
 ) {
-    sf::Color totalIllumination{0, 0, 0};
+    sf::Vector3f totalIllumination{0, 0, 0};
 
-    const float ka = 0.0;
-    const sf::Color &ia = objectColor;
+    totalIllumination += productElementWise(material.ambient, light.ambient);
 
-    const sf::Color illuminationAmbient{
-            static_cast<sf::Uint8>(ka * ia.r),
-            static_cast<sf::Uint8>(ka * ia.g),
-            static_cast<sf::Uint8>(ka * ia.b)
-    };
-
-    totalIllumination += illuminationAmbient;
-
-    const float kd = 0.01;
-    const sf::Color &id = objectColor;
-
-    const float lightDirNormalDotProduct = std::max(0.0f, dot(towardLightSource, surfaceNormal));
-
-    const sf::Color illuminationDiffuse{
-            static_cast<sf::Uint8>(kd * lightDirNormalDotProduct * id.r),
-            static_cast<sf::Uint8>(kd * lightDirNormalDotProduct * id.g),
-            static_cast<sf::Uint8>(kd * lightDirNormalDotProduct * id.b)
-    };
-
-    totalIllumination += illuminationDiffuse;
-    if (lightDirNormalDotProduct > 0.0) {
-        const float shininess = 27.8974;
-        const float ks = 0.5;
-
-        const sf::Color &is = lightColor;
-
-        const float reflectedRayDirTowardCameraDotProduct =
-                std::max(0.0f, dot(reflectedRayDirection, towardCamera));
-
-        const float reflectedRayDirTowardCameraDotProductToPowShininess =
-                std::pow(reflectedRayDirTowardCameraDotProduct, shininess);
-
-        const sf::Color illuminationSpecular = {
-                static_cast<sf::Uint8>(ks * reflectedRayDirTowardCameraDotProductToPowShininess * is.r),
-                static_cast<sf::Uint8>(ks * reflectedRayDirTowardCameraDotProductToPowShininess * is.g),
-                static_cast<sf::Uint8>(ks * reflectedRayDirTowardCameraDotProductToPowShininess * is.b)
-        };
-
-        totalIllumination += illuminationSpecular;
+    const float lightDirNormalDotProduct = dot(towardLightSource, surfaceNormal);
+    if (lightDirNormalDotProduct <= 0) {
+        return totalIllumination;
     }
+    totalIllumination += lightDirNormalDotProduct * productElementWise(material.diffuse, light.diffuse);
 
+    const float reflectedRayDirTowardCameraDotProduct = dot(reflectedRayDirection, towardCamera);
+    if (reflectedRayDirTowardCameraDotProduct <= 0) {
+        return totalIllumination;
+    }
+    const float reflectedRayDirTowardCameraDotProductToPowShininess =
+            std::pow(reflectedRayDirTowardCameraDotProduct, material.shininess);
+    totalIllumination += reflectedRayDirTowardCameraDotProductToPowShininess * productElementWise(material.specular,
+                                                                                                  light.specular);
     return totalIllumination;
 }
 
@@ -84,7 +79,10 @@ const sf::Vector3f CAMERA_POSITION(0.0f, 0.0f, -1.0f);
 
 sf::Event event{};
 
-void handleEvents(sf::RenderWindow &window, sf::Vector3f &lightSourcePosition) {
+void handleEvents(sf::RenderWindow &window,
+                  sf::Vector3f &lightSourcePosition,
+                  std::initializer_list<Material>::iterator &it,
+                  const std::initializer_list<Material> &materials) {
     while (window.pollEvent(event)) {
         if (event.type == sf::Event::Closed) {
             window.close();
@@ -110,6 +108,16 @@ void handleEvents(sf::RenderWindow &window, sf::Vector3f &lightSourcePosition) {
                 case sf::Keyboard::E:
                     lightSourcePosition.z -= POSITION_DELTA;
                     break;
+                case sf::Keyboard::Right:
+                    if (it != std::prev(materials.end())) {
+                        ++it;
+                    }
+                    break;
+                case sf::Keyboard::Left:
+                    if (it != materials.begin()) {
+                        --it;
+                    }
+                    break;
                 default:
                     break;
             }
@@ -119,12 +127,13 @@ void handleEvents(sf::RenderWindow &window, sf::Vector3f &lightSourcePosition) {
 
 sf::Sprite shadedBall;
 sf::VertexArray vertices(sf::Points, WIDTH * HEIGHT);
+sf::Color BG_COLOR{0xdb, 0xdc, 0xdc};
 
 void draw(sf::RenderWindow &window,
           sf::RenderTexture &renderTexture,
           const sf::Vector3f &lightSourcePosition,
-          const sf::Color &objectColor,
-          const sf::Color &lightColor) {
+          const Material &material,
+          const Light &light) {
     for (int y = 0; y < HEIGHT; ++y) {
         for (int x = 0; x < WIDTH; ++x) {
             float nx = 2.f * x / WIDTH - 1.f;
@@ -146,21 +155,26 @@ void draw(sf::RenderWindow &window,
                         2 * dot(towardLightSource, surfaceNormal) * surfaceNormal - towardLightSource;
 
                 normalize(reflectedRayDirection);
-                sf::Color shadingColor = calculatePhongLighting(towardLightSource,
-                                                                surfaceNormal,
-                                                                reflectedRayDirection,
-                                                                towardCamera,
-                                                                objectColor,
-                                                                lightColor);
+                sf::Vector3f shadingColor = calculatePhongLighting(towardLightSource,
+                                                                   surfaceNormal,
+                                                                   reflectedRayDirection,
+                                                                   towardCamera,
+                                                                   material,
+                                                                   light);
+                capColorVector(shadingColor);
 
                 int index = y * WIDTH + x;
                 vertices[index].position = sf::Vector2f(x, y);
-                vertices[index].color = shadingColor;
+                vertices[index].color = sf::Color(
+                        shadingColor.x * 255.f,
+                        shadingColor.y * 255.f,
+                        shadingColor.z * 255.f
+                );
             }
         }
     }
 
-    renderTexture.clear();
+    renderTexture.clear(BG_COLOR);
     renderTexture.draw(vertices);
     renderTexture.display();
     shadedBall.setTexture(renderTexture.getTexture());
@@ -169,11 +183,40 @@ void draw(sf::RenderWindow &window,
 }
 
 int main() {
-    sf::Vector3f lightSourcePosition(0.f, 0.f, -1.f);
+    sf::Vector3f lightSourcePosition(0.f, 0.f, -2.f);
     sf::RenderWindow window(sf::VideoMode(WIDTH, HEIGHT), "project");
 
-    sf::Color lightColor(255, 255, 255);
-    sf::Color objectColor(0xF5, 0xBF, 0x03);
+    Light light{{1., 1., 1.},
+                {1., 1., 1.},
+                {1., 1., 1.}};
+
+    Material polishedGold{
+            {0.24725f, 0.2245f, 0.0645f},
+            {0.34615f, 0.3143f,0.0903f},
+            {0.797357f, 0.723991f,0.208006f},
+            83.2
+    };
+    Material materialWall{
+            {0.05f, 0.05f, 0.05f},
+            {0.6f, 0.6f, 0.6f},
+            {0.6f, 0.6f, 0.6f},
+            32.0f
+    };
+    Material materialPlastic{
+            {0.0f, 0.0f, 0.0f},
+            {0.01f, 0.01f, 0.01f},
+            {0.5f, 0.5f, 0.5f},
+            32.0f
+    };
+    Material materialWood{
+            {0.05f, 0.05f, 0.0f},
+            {0.4f, 0.25f, 0.1f},
+            {0.04f, 0.04f, 0.04f},
+            10.0f
+    };
+
+    auto materials = {polishedGold, materialWall, materialPlastic, materialWood};
+    auto materialsIt = materials.begin();
 
     sf::RenderTexture renderTexture;
 
@@ -185,8 +228,8 @@ int main() {
 
     while (window.isOpen()) {
         clock.restart();
-        handleEvents(window, lightSourcePosition);
-        draw(window, renderTexture, lightSourcePosition, objectColor, lightColor);
+        handleEvents(window, lightSourcePosition, materialsIt, materials);
+        draw(window, renderTexture, lightSourcePosition, *materialsIt, light);
 
         std::cout << 1 / clock.getElapsedTime().asSeconds() << "FPS" << std::endl;
     }
